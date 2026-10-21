@@ -1,0 +1,153 @@
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
+
+app = FastAPI(title="AquaSense API")
+
+class IrrigationRequest(BaseModel):
+    soil_moisture: float
+    temperature: float
+    crop_type: str
+    rain_probability: float
+
+@app.post("/calculate-irrigation")
+def calculate_irrigation(data: IrrigationRequest):
+    crop_coefficients = {
+        "paddy": 1.5,
+        "tomato": 1.0,
+        "sugarcane": 1.8,
+        "wheat": 0.8
+    }
+    
+    multiplier = crop_coefficients.get(data.crop_type.lower(), 1.0)
+    
+    action = "Watering Recommended"
+    water_liters = 0.0
+    reason = "Soil moisture is optimal."
+    
+    if data.rain_probability > 50.0:
+        action = "Skip Irrigation"
+        water_liters = 0.0
+        reason = f"High rain probability ({data.rain_probability}%). Natural rainfall expected; saving water!"
+    elif data.soil_moisture < 30.0:
+        deficit = 30.0 - data.soil_moisture
+        water_liters = round(deficit * 10 * multiplier, 2)
+        action = "Immediate Irrigation Required"
+        reason = f"Soil moisture is critically low ({data.soil_moisture}%)."
+    else:
+        reason = "Soil moisture is within safe limits. No watering needed today."
+
+    return {
+        "crop": data.crop_type,
+        "soil_moisture": data.soil_moisture,
+        "rain_probability": data.rain_probability,
+        "action": action,
+        "recommended_water_liters": water_liters,
+        "reasoning": reason
+    }
+
+@app.get("/", response_class=HTMLResponse)
+def serve_frontend():
+    return """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>AquaSense | AI Water Intelligence</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+    </head>
+    <body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col items-center justify-center p-6">
+        <div class="max-w-2xl w-full bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl p-8">
+            <div class="flex items-center space-x-3 mb-6">
+                <span class="text-3xl">🌱</span>
+                <div>
+                    <h1 class="text-2xl font-bold text-emerald-400">AquaSense</h1>
+                    <p class="text-sm text-slate-400">AI-Powered Water Intelligence for Small Farms</p>
+                </div>
+            </div>
+
+            <div class="space-y-6">
+                <div>
+                    <label class="block text-sm font-medium text-slate-300 mb-2">Select Crop Type</label>
+                    <select id="cropType" class="w-full bg-slate-700 border border-slate-600 rounded-lg p-3 text-white">
+                        <option value="tomato">Tomato</option>
+                        <option value="paddy">Paddy</option>
+                        <option value="sugarcane">Sugarcane</option>
+                        <option value="wheat">Wheat</option>
+                    </select>
+                </div>
+
+                <div>
+                    <div class="flex justify-between text-sm mb-1">
+                        <span class="text-slate-300">Current Temperature</span>
+                        <span id="tempVal" class="font-bold text-emerald-400">32 °C</span>
+                    </div>
+                    <input type="range" id="temperature" min="15" max="45" value="32" class="w-full accent-emerald-500 cursor-pointer" oninput="document.getElementById('tempVal').innerText = this.value + ' °C'">
+                </div>
+
+                <div>
+                    <div class="flex justify-between text-sm mb-1">
+                        <span class="text-slate-300">Soil Moisture Level</span>
+                        <span id="moistureVal" class="font-bold text-emerald-400">25%</span>
+                    </div>
+                    <input type="range" id="soilMoisture" min="0" max="100" value="25" class="w-full accent-emerald-500 cursor-pointer" oninput="document.getElementById('moistureVal').innerText = this.value + '%'">
+                </div>
+
+                <div>
+                    <div class="flex justify-between text-sm mb-1">
+                        <span class="text-slate-300">Rain Probability (Next 24h)</span>
+                        <span id="rainVal" class="font-bold text-emerald-400">10%</span>
+                    </div>
+                    <input type="range" id="rainProb" min="0" max="100" value="10" class="w-full accent-emerald-500 cursor-pointer" oninput="document.getElementById('rainVal').innerText = this.value + '%'">
+                </div>
+
+                <button onclick="runAnalysis()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-3 rounded-lg transition duration-200 shadow-lg">
+                    🚀 Run AI Water Analysis
+                </button>
+            </div>
+
+            <div id="resultsCard" class="hidden mt-8 bg-slate-900 border border-slate-700 rounded-xl p-6 space-y-4">
+                <h2 class="text-lg font-semibold text-emerald-400 border-b border-slate-800 pb-2">📋 Irrigation Action Plan</h2>
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="bg-slate-800 p-4 rounded-lg">
+                        <p class="text-xs text-slate-400 uppercase tracking-wider">Recommended Action</p>
+                        <p id="resAction" class="text-lg font-bold text-white mt-1">-</p>
+                    </div>
+                    <div class="bg-slate-800 p-4 rounded-lg">
+                        <p class="text-xs text-slate-400 uppercase tracking-wider">Water Required</p>
+                        <p id="resWater" class="text-lg font-bold text-emerald-400 mt-1">-</p>
+                    </div>
+                </div>
+                <div class="bg-emerald-950/40 border border-emerald-900/50 p-4 rounded-lg text-emerald-300 text-sm" id="resReason">-</div>
+            </div>
+        </div>
+
+        <script>
+            async function runAnalysis() {
+                const payload = {
+                    soil_moisture: parseFloat(document.getElementById('soilMoisture').value),
+                    temperature: parseFloat(document.getElementById('temperature').value),
+                    crop_type: document.getElementById('cropType').value,
+                    rain_probability: parseFloat(document.getElementById('rainProb').value)
+                };
+
+                const response = await fetch('/calculate-irrigation', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('resAction').innerText = data.action;
+                    document.getElementById('resWater').innerText = data.recommended_water_liters + " Liters/m²";
+                    document.getElementById('resReason').innerHTML = `💡 <strong>AI System Reasoning:</strong> ${data.reasoning}`;
+                    document.getElementById('resultsCard').classList.remove('hidden');
+                }
+            }
+        </script>
+    </body>
+    </html>
+    """
+    
